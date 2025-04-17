@@ -6,6 +6,23 @@ import pandas as pd
 from io import BytesIO
 
 st.set_page_config(page_title="Analisador SAFT", layout="wide")
+# LOGIN SIMPLES
+def check_password():
+    def password_entered():
+        if st.session_state["password"] == "coutinho123":
+            st.session_state["password_correct"] = True
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        st.text_input("Password", type="password", on_change=password_entered, key="password")
+        st.stop()
+    elif not st.session_state["password_correct"]:
+        st.text_input("Password", type="password", on_change=password_entered, key="password")
+        st.error("❌ Password incorreta")
+        st.stop()
+
+check_password()
 st.title("📊 Analisador SAFT - Centro de Análise Avançada")
 
 uploaded_files = st.file_uploader(
