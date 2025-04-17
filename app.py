@@ -3,112 +3,102 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from datetime import datetime
 import pandas as pd
+from io import BytesIO
 
-st.title("🧾 Analisador de SAFT - Totais por Dia")
-
-uploaded_file = st.file_uploader("Carrega o ficheiro SAFT (.xml)", type="xml")
-
-if uploaded_file:
-    try:
-        tree = ET.parse(uploaded_file)
-        root = tree.getroot()
-
-        # Recolher todas as faturas
-        invoices = []
-        for elem in root.iter():
-            if elem.tag.lower().endswith("invoice"):
-                invoices.append(elem)
-
-        # Totais por dia
-        totais_por_dia = defaultdict(float)
-
-        for invoice in invoices:
-            data_fatura = None
-            valor_fatura = None
-
-            for elem in invoice.iter():
-                tag = elem.tag.lower()
-                if tag.endswith("invoicedate"):
-                    try:
-                        data_fatura = datetime.strptime(elem.text.strip(), "%Y-%m-%d").date()
-                    except:
-                        pass
-                if tag.endswith("grosstotal"):
-                    try:
-                        valor_fatura = float(elem.text.strip())
-                    except:
-                        pass
-
-            if data_fatura and valor_fatura is not None:
-                totais_por_dia[data_fatura] += valor_fatura
-
-        # Mostrar resultados
-        df = pd.DataFrame(sorted(totais_por_dia.items()), columns=["Data", "Total Faturado (€)"])
-        st.subheader("📅 Totais por Dia")
-        st.dataframe(df)
-
-        # Gráfico (opcional)
-        st.line_chart(df.set_index("Data"))
-
-    except Exception as e:
-        st.error(f"Erro ao processar o ficheiro: {e}")
-        app.py
-        import streamlit as st
-import xml.etree.ElementTree as ET
-from collections import defaultdict
-from datetime import datetime
-import pandas as pd
-
-st.title("📂 Analisador de SAFT - Múltiplos ficheiros (até 12)")
+st.set_page_config(page_title="Analisador SAFT", layout="wide")
+st.title("📊 Analisador SAFT - Centro de Análise Avançada")
 
 uploaded_files = st.file_uploader(
-    "Carrega até 12 ficheiros SAFT (.xml)", 
-    type="xml", 
+    "Carrega até 12 ficheiros SAFT (.xml)",
+    type="xml",
     accept_multiple_files=True
 )
+
+def parse_saft(files):
+    registos = []
+
+    for f in files:
+        try:
+            tree = ET.parse(f)
+            root = tree.getroot()
+
+            for inv in root.iter():
+                if inv.tag.lower().endswith("invoice"):
+                    data = None
+                    total = None
+                    cliente = None
+
+                    for elem in inv.iter():
+                        tag = elem.tag.lower()
+                        if tag.endswith("invoicedate"):
+                            try:
+                                data = datetime.strptime(elem.text.strip(), "%Y-%m-%d").date()
+                            except:
+                                pass
+                        elif tag.endswith("grosstotal"):
+                            try:
+                                total = float(elem.text.strip())
+                            except:
+                                pass
+                        elif tag.endswith("customertaxid"):
+                            cliente = elem.text.strip()
+
+                    if data and total is not None:
+                        registos.append({
+                            "Data": data,
+                            "Cliente": cliente or "Desconhecido",
+                            "Total Faturado (€)": total
+                        })
+        except Exception as e:
+            st.warning(f"Erro ao processar {f.name}: {e}")
+
+    return pd.DataFrame(registos)
 
 if uploaded_files:
     if len(uploaded_files) > 12:
         st.error("⚠️ Só podes carregar até 12 ficheiros.")
     else:
-        totais_por_dia = defaultdict(float)
+        df = parse_saft(uploaded_files)
 
-        for f in uploaded_files:
-            try:
-                tree = ET.parse(f)
-                root = tree.getroot()
+        if df.empty:
+            st.warning("Nenhuma fatura encontrada nos ficheiros carregados.")
+        else:
+            st.sidebar.header("📌 Seleciona a Análise")
+            escolha = st.sidebar.radio("Tipo de análise:", [
+                "Totais por Dia",
+                "Totais por Cliente",
+                "Totais por Mês",
+                "Exportar para Excel"
+            ])
 
-                invoices = []
-                for elem in root.iter():
-                    if elem.tag.lower().endswith("invoice"):
-                        invoices.append(elem)
+            if escolha == "Totais por Dia":
+                st.subheader("📅 Totais Faturados por Dia")
+                df_dia = df.groupby("Data").sum().reset_index()
+                st.dataframe(df_dia)
+                st.line_chart(df_dia.set_index("Data"))
 
-                for invoice in invoices:
-                    data_fatura = None
-                    valor_fatura = None
+            elif escolha == "Totais por Cliente":
+                st.subheader("👥 Totais por Cliente")
+                df_cliente = df.groupby("Cliente").sum().reset_index()
+                st.dataframe(df_cliente)
+                st.bar_chart(df_cliente.set_index("Cliente"))
 
-                    for elem in invoice.iter():
-                        tag = elem.tag.lower()
-                        if tag.endswith("invoicedate"):
-                            try:
-                                data_fatura = datetime.strptime(elem.text.strip(), "%Y-%m-%d").date()
-                            except:
-                                pass
-                        if tag.endswith("grosstotal"):
-                            try:
-                                valor_fatura = float(elem.text.strip())
-                            except:
-                                pass
+            elif escolha == "Totais por Mês":
+                st.subheader("🗓️ Totais por Mês")
+                df["AnoMes"] = df["Data"].astype("datetime64[ns]").dt.to_period("M").astype(str)
+                df_mes = df.groupby("AnoMes").sum().reset_index()
+                st.dataframe(df_mes)
+                st.bar_chart(df_mes.set_index("AnoMes"))
 
-                    if data_fatura and valor_fatura is not None:
-                        totais_por_dia[data_fatura] += valor_fatura
+            elif escolha == "Exportar para Excel":
+                st.subheader("📥 Exportação para Excel")
+                output = BytesIO()
+                df.to_excel(output, index=False, sheet_name="SAFT")
+                st.download_button(
+                    label="📂 Descarregar Excel",
+                    data=output.getvalue(),
+                    file_name="analise_saft.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
-            except Exception as e:
-                st.warning(f"Erro ao processar {f.name}: {e}")
-
-        # Mostrar resultados
-        df = pd.DataFrame(sorted(totais_por_dia.items()), columns=["Data", "Total Faturado (€)"])
-        st.subheader("📅 Totais Faturados por Dia (todos os ficheiros)")
-        st.dataframe(df)
-        st.line_chart(df.set_index("Data"))
-        
+      
